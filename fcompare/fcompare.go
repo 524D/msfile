@@ -70,7 +70,7 @@ func CompareFiles(fns []string, method CompareMethod, keepATime bool, checkKeepA
 			return nil, err
 		}
 		if !canKeep {
-			return nil, errors.New("Can't keep atime")
+			return nil, errors.New("can't keep atime")
 		}
 	}
 
