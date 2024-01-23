@@ -5,15 +5,13 @@ package main
 // Output of msfile is a JSON string, which can be used by other programs
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
-	"io"
 	"log"
 	"os"
 
+	"github.com/524D/msfile/fcompare"
 	"github.com/djherbis/atime"
 )
 
@@ -54,84 +52,6 @@ func handleCommandLine() {
 
 }
 
-func getPartialChecksum(filename string) (string, bool, error) {
-	// The partial checksum is the SHA256 sum of the first 1M of the file, plus the middle 1M of the file, plus the last 1M of the file
-	// If the file is less than 16M, then the partial checksum is the SHA256 sum of the entire file
-	// The limit of 16M is used because reding 16M is probably faster than reading 1M three times
-	// The middle of the file is defined as the middle 1M of the file, rounded down to the nearest 1M
-
-	isFull := false // Indicates if the partial checksum is the same as the full checksum
-	// Get file size
-	fi, err := os.Stat(filename)
-	if err != nil {
-		return "", false, err
-	}
-	filesize := fi.Size()
-
-	f, err := os.Open(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-
-	h := sha256.New()
-
-	// If the file is less than 16M, then the partial checksum is the SHA256 sum of the entire file
-	if filesize <= minPartialChecksumSize {
-		// Compute SHA256 sum of entire file
-		if _, err := io.Copy(h, f); err != nil {
-			return "", false, err
-		}
-		isFull = true
-
-	} else {
-		// Compute SHA256 sum of first 1M of file
-		if _, err := io.CopyN(h, f, 1024*1024); err != nil {
-			return "", false, err
-		}
-
-		// Compute SHA256 sum of middle 1M of file
-
-		// Compute the middle of the file, rounded down to the nearest 1M
-		filemid := filesize / 2
-		filemid = filemid - (filemid % (1024 * 1024))
-
-		// Seek to middle of file
-		if _, err := f.Seek(filemid, io.SeekStart); err != nil {
-			return "", false, err
-		}
-		if _, err := io.CopyN(h, f, 1024*1024); err != nil {
-			return "", false, err
-		}
-
-		// Compute SHA256 sum of last 1M of file
-		if _, err := f.Seek(-1024*1024, io.SeekEnd); err != nil {
-			return "", false, err
-		}
-		if _, err := io.Copy(h, f); err != nil {
-			return "", false, err
-		}
-	}
-
-	return hex.EncodeToString(h.Sum(nil)), isFull, nil
-}
-
-func getChecksum(filename string) (string, error) {
-	f, err := os.Open(filename)
-	if err != nil {
-		log.Fatal(err)
-	}
-	defer f.Close()
-
-	h := sha256.New()
-
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
-
 func processFile(filename string) (FileInfo, error) {
 	var fileinfo FileInfo
 
@@ -165,7 +85,7 @@ func processFile(filename string) (FileInfo, error) {
 		case "partial":
 			// Get partial checksum
 			isFull := false
-			fileinfo.PartialChecksum, isFull, err = getPartialChecksum(filename)
+			fileinfo.PartialChecksum, isFull, err = fcompare.GetPartialChecksum(filename)
 			if err != nil {
 				return fileinfo, err
 			}
@@ -176,7 +96,7 @@ func processFile(filename string) (FileInfo, error) {
 			// Compare file sizes
 		case "full":
 			// Get full checksum
-			fileinfo.FullChecksum, err = getChecksum(filename)
+			fileinfo.FullChecksum, err = fcompare.GetChecksum(filename)
 			if err != nil {
 				return fileinfo, err
 			}
@@ -197,6 +117,13 @@ func main() {
 		fmt.Println("Usage: msfile [options] file1 [file2]")
 		flag.PrintDefaults()
 		os.Exit(1)
+	}
+
+	for _, fn := range flag.Args() {
+		canKeep, _ := fcompare.TestKeepAtime(fn)
+		if !canKeep {
+			log.Fatalln("Warning: unable to preserve file times for", fn)
+		}
 	}
 
 	// Check if we are comparing files
